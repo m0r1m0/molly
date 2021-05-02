@@ -24,8 +24,20 @@ pub struct Buffer {
     pub is_dirty: Cell<bool>,
 }
 
-#[derive(Clone, Copy)]
+impl Default for Buffer {
+    fn default() -> Self {
+        Self {
+            page_id: Default::default(),
+            page: RefCell::new([0u8; PAGE_SIZE]),
+            is_dirty: Cell::new(false),
+        }
+    }
+}
+
+#[derive(Default, Clone, Copy)]
 pub struct BufferId(usize);
+
+#[derive(Default)]
 pub struct Frame {
     pub usage_count: u64,
     buffer: Rc<Buffer>,
@@ -48,6 +60,16 @@ impl IndexMut<BufferId> for BufferPool {
     }
 }
 impl BufferPool {
+    pub fn new(pool_size: usize) -> Self {
+        let mut buffers = vec![];
+        buffers.resize_with(pool_size, Default::default);
+        let next_victim_id = BufferId::default();
+        Self {
+            buffers,
+            next_victim_id,
+        }
+    }
+
     fn size(&self) -> usize {
         self.buffers.len()
     }
@@ -94,8 +116,17 @@ pub struct BufferPoolManager {
     page_table: HashMap<PageId, BufferId>,
 }
 impl BufferPoolManager {
+    pub fn new(disk: DiskManager, pool: BufferPool) -> Self {
+        let page_table = HashMap::new();
+        Self {
+            disk,
+            pool,
+            page_table,
+        }
+    }
+
     // ページを貸し出す
-    fn fetch_page(&mut self, page_id: PageId) -> Result<Rc<Buffer>, Error> {
+    pub fn fetch_page(&mut self, page_id: PageId) -> Result<Rc<Buffer>, Error> {
         // バッファプール内にページがあれば利用中にして貸し出す
         if let Some(&buffer_id) = self.page_table.get(&page_id) {
             let frame = &mut self.pool[buffer_id];
@@ -128,6 +159,30 @@ impl BufferPoolManager {
         // ページテーブルに新たに貸し出したページを追加
         self.page_table.insert(page_id, buffer_id);
         let page = Rc::clone(&frame.buffer);
+        Ok(page)
+    }
+
+    pub fn create_page(&mut self) -> Result<Rc<Buffer>, Error> {
+        let buffer_id = self.pool.evict().ok_or(Error::NoFreeBuffer)?;
+        let frame = &mut self.pool[buffer_id];
+        let evict_page_id = frame.buffer.page_id;
+        let page_id = {
+            let buffer = Rc::get_mut(&mut frame.buffer).unwrap();
+            if buffer.is_dirty.get() {
+                self.disk
+                    .write_page_data(evict_page_id, buffer.page.get_mut())?;
+            }
+            self.page_table.remove(&evict_page_id);
+            let page_id = self.disk.allocate_page();
+            *buffer = Buffer::default();
+            buffer.page_id = page_id;
+            buffer.is_dirty.set(true);
+            frame.usage_count = 1;
+            page_id
+        };
+        let page = Rc::clone(&frame.buffer);
+        self.page_table.remove(&evict_page_id);
+        self.page_table.insert(page_id, buffer_id);
         Ok(page)
     }
 }

@@ -48,6 +48,11 @@ impl DiskManager {
         self.heap_file.seek(SeekFrom::Start(offset))?;
         self.heap_file.read_exact(data)
     }
+
+    pub fn sync(&mut self) -> io::Result<()> {
+        self.heap_file.flush()?;
+        self.heap_file.sync_all()
+    }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, FromBytes, AsBytes)]

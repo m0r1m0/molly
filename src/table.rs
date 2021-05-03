@@ -7,8 +7,8 @@ pub struct SimpleTable {
 }
 
 impl SimpleTable {
-    pub fn create(&mut self, bufferPoolManager: &mut BufferPoolManager) -> Result<()> {
-        let btree = BTree::create(bufferPoolManager)?;
+    pub fn create(&mut self, buffer_pool_manager: &mut BufferPoolManager) -> Result<()> {
+        let btree = BTree::create(buffer_pool_manager)?;
         self.meta_page_id = btree.meta_page_id;
         Ok(())
     }
@@ -16,7 +16,7 @@ impl SimpleTable {
     // PK, それ以外に分けてエンコードし、BTreeに入れる
     pub fn insert(
         &mut self,
-        bufferPoolManager: &mut BufferPoolManager,
+        buffer_pool_manager: &mut BufferPoolManager,
         record: &[&[u8]],
     ) -> Result<()> {
         let btree = BTree::new(self.meta_page_id);
@@ -29,7 +29,7 @@ impl SimpleTable {
         tuple::encode(record[self.num_key_elems..].iter(), &mut value);
 
         // BTree の key, value に入れる
-        btree.insert(bufferPoolManager, &key, &value);
+        btree.insert(buffer_pool_manager, &key, &value)?;
         Ok(())
     }
 }

@@ -107,3 +107,51 @@ impl<'a> Executor for ExecFilter<'a> {
         }
     }
 }
+
+pub struct IndexScan<'a> {
+    pub table_meta_page_id: PageId,
+    pub index_meta_page_id: PageId,
+    pub search_mode: TupleSearchMode<'a>,
+    pub while_cond: &'a dyn Fn(TupleSlice) -> bool,
+}
+
+impl<'a> PlanNode for IndexScan<'a> {
+    fn start(&self, bufmgr: &mut BufferPoolManager) -> Result<BoxExecutor> {
+        let table_btree = BTree::new(self.table_meta_page_id);
+        let index_btree = BTree::new(self.index_meta_page_id);
+        let index_iter = index_btree.search(bufmgr, self.search_mode.encode())?;
+        Ok(Box::new(ExecIndexScan {
+            table_btree,
+            index_iter,
+            while_cond: self.while_cond,
+        }))
+    }
+}
+
+pub struct ExecIndexScan<'a> {
+    table_btree: BTree,
+    index_iter: btree::Iter,
+    while_cond: &'a dyn Fn(TupleSlice) -> bool,
+}
+
+impl<'a> Executor for ExecIndexScan<'a> {
+    fn next(&mut self, bufmgr: &mut BufferPoolManager) -> Result<Option<Tuple>> {
+        let (skey_bytes, pkey_bytes) = match self.index_iter.next(bufmgr)? {
+            Some(pair) => pair,
+            None => return Ok(None),
+        };
+        let mut skey = vec![];
+        tuple::decode(&skey_bytes, &mut skey);
+        if !(self.while_cond)(&skey) {
+            return Ok(None);
+        }
+        let mut table_iter = self
+            .table_btree
+            .search(bufmgr, SearchMode::Key(pkey_bytes))?;
+        let (pkey_bytes, tuple_bytes) = table_iter.next(bufmgr)?.unwrap();
+        let mut tuple = vec![];
+        tuple::decode(&pkey_bytes, &mut tuple);
+        tuple::decode(&tuple_bytes, &mut tuple);
+        Ok(Some(tuple))
+    }
+}
